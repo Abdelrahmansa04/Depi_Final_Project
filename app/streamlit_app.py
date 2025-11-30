@@ -3,8 +3,68 @@ import numpy as np
 import pandas as pd
 from keras.models import load_model
 from datetime import datetime
+from pathlib import Path
 import plotly.express as px
 import plotly.graph_objects as go
+
+# =========================================================
+# Page Configuration & Styling
+# =========================================================
+st.set_page_config(
+    page_title="Sales Forecasting Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("""
+    <style>
+    .main {
+        padding: 0rem 1rem;
+    }
+    .stButton>button {
+        border-radius: 8px;
+        transition: all 0.3s ease;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    h1 {
+        color: #1f77b4;
+        font-weight: 700;
+        padding-bottom: 1rem;
+    }
+    h2, h3 {
+        color: #1f77b4;
+        font-weight: 600;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 28px;
+        font-weight: 600;
+    }
+    .metric-card {
+        background-color: #f0f2f6;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        margin: 0.5rem 0;
+        border: 1px solid #e0e0e0;
+        transition: all 0.3s ease;
+    }
+    .metric-card:hover {
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transform: translateY(-2px);
+    }
+    .metric-card h3 {
+        margin-top: 0;
+        color: #1f77b4;
+    }
+    .metric-card p {
+        margin-bottom: 0;
+        color: #6b7280;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # =========================================================
 # Sidebar Navigation
@@ -24,7 +84,9 @@ page = st.sidebar.radio(
 @st.cache_resource
 def load_keras_model():
     try:
-        model = load_model("model_nn.keras")
+        # Model is in the same directory as this script
+        model_path = Path(__file__).parent / "model_nn.keras"
+        model = load_model(str(model_path))
         return model
     except Exception as e:
         st.error(f"❌ Error loading model: {e}")
@@ -300,34 +362,181 @@ elif page == "🔮 Make Predictions":
 # =========================================================
 elif page == "📈 Batch Forecast":
     st.title("📦 Batch Forecast")
+    st.markdown("### Upload your CSV file to predict sales using AI-powered forecasting")
+    
+    if model is None:
+        st.warning("⚠️ **Please wait for the model to load!**")
+        st.info("The model is being loaded automatically. Please refresh if it doesn't load.")
+    else:
+        st.markdown("---")
+        
+        # Feature explanation
+        with st.expander("ℹ️ Understanding CSV Requirements", expanded=False):
+            st.markdown("""
+            ### 📋 Supported CSV Formats:
+            
+            **Option 1: Raw Input Columns** (Recommended)
+            Your CSV file should contain the following columns:
+            - **store_nbr**: Store number (1-54)
+            - **family**: Product family (e.g., GROCERY I, BEVERAGES, DAIRY)
+            - **date**: Date in format YYYY-MM-DD
+            - **onpromotion**: Promotion flag (0.0 or 1.0)
+            - **dcoilwtico**: Oil price value
+            - **is_holiday**: Holiday flag (0 or 1, or True/False)
+            - **is_event**: Event flag (0 or 1, or True/False)
+            - **is_work_day**: Work day flag (0 or 1, or True/False)
+            - **is_earthquake**: Earthquake flag (0 or 1, or True/False)
+            
+            **Option 2: Preprocessed Features**
+            Your CSV file can contain exactly 103 feature columns (already processed).
+            The system will detect this format automatically.
+            
+            ---
+            
+            ### 🧠 How It Works:
+            
+            - **Raw Input**: The system converts each row into a 103-feature vector using feature engineering
+            - **Preprocessed**: The system uses the features directly for prediction
+            """)
+        
+        # File uploader
+        st.markdown("### 📁 Upload Your Data")
+        uploaded = st.file_uploader(
+            "Choose CSV file with input features",
+            type=['csv'],
+            help="Upload a CSV file containing the required columns for prediction."
+        )
 
-    uploaded = st.file_uploader("Upload CSV with input features")
-
-    if uploaded:
-        df = pd.read_csv(uploaded)
-        st.write("📄 Uploaded Data:")
-        st.dataframe(df)
-
-        if st.button("Run Batch Prediction"):
-            predictions = []
-            for _, row in df.iterrows():
-                features = create_feature_vector(
-                    store_nbr=row["store_nbr"],
-                    family=row["family"],
-                    date=row["date"],
-                    onpromotion=row["onpromotion"],
-                    dcoilwtico=row["dcoilwtico"],
-                    is_holiday=row["is_holiday"],
-                    is_event=row["is_event"],
-                    is_work_day=row["is_work_day"],
-                    is_earthquake=row["is_earthquake"]
-                )
-                pred = model.predict(features, verbose=0)[0][0]
-                predictions.append(max(0, pred))
-
-            df["prediction"] = predictions
-            st.success("Done!")
-            st.dataframe(df)
+        if uploaded:
+            try:
+                df = pd.read_csv(uploaded)
+                result_df = df.copy()
+                
+                # Get model expected features
+                model_features = model.input_shape[-1] if hasattr(model, 'input_shape') else 103
+                
+                # Detect CSV format
+                required_cols = ["store_nbr", "family", "date", "onpromotion", 
+                               "dcoilwtico", "is_holiday", "is_event", 
+                               "is_work_day", "is_earthquake"]
+                has_raw_cols = all(col in df.columns for col in required_cols)
+                has_processed_features = len(df.columns) == model_features
+                
+                # Data preview and validation
+                st.markdown("### 📋 Data Preview & Validation")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    st.markdown("**Uploaded Data Preview**")
+                    st.dataframe(df.head(100), use_container_width=True, height=400)
+                
+                with col2:
+                    st.markdown("**📊 Data Statistics**")
+                    st.metric("Total Rows", f"{len(df):,}")
+                    st.metric("Columns", len(df.columns))
+                    st.metric("Expected Features", model_features)
+                    
+                    st.markdown("---")
+                    # Format detection
+                    if has_processed_features:
+                        st.success("✅ **Format: Preprocessed Features**")
+                        st.info(f"Detected {model_features} feature columns. Will use directly.")
+                    elif has_raw_cols:
+                        st.success("✅ **Format: Raw Input Columns**")
+                        st.info("Will convert to feature vectors automatically.")
+                    else:
+                        missing_cols = [col for col in required_cols if col not in df.columns]
+                        st.error(f"❌ **Format not recognized**")
+                        st.warning(f"Missing columns: {', '.join(missing_cols)}")
+                        st.info(f"Expected either:\n- Raw columns: {', '.join(required_cols)}\n- Or {model_features} processed feature columns")
+                
+                st.markdown("---")
+                
+                # Prediction button
+                if st.button("🚀 Predict Sales", use_container_width=True, type="primary"):
+                    if not (has_raw_cols or has_processed_features):
+                        st.error("❌ CSV format not recognized. Please check the requirements above.")
+                    else:
+                        with st.spinner("🔮 Predicting sales..."):
+                            predictions = []
+                            progress_bar = st.progress(0)
+                            
+                            try:
+                                if has_processed_features:
+                                    # Direct prediction with processed features
+                                    feature_data = df.values.astype(np.float32)
+                                    batch_predictions = model.predict(feature_data, verbose=0)
+                                    predictions = [max(0, float(pred[0])) for pred in batch_predictions]
+                                    progress_bar.progress(1.0)
+                                else:
+                                    # Convert raw columns to features
+                                    for idx, (_, row) in enumerate(df.iterrows()):
+                                        try:
+                                            # Convert boolean/string values to proper format
+                                            onpromotion = float(row["onpromotion"])
+                                            dcoilwtico = float(row["dcoilwtico"])
+                                            is_holiday = float(bool(row["is_holiday"]))
+                                            is_event = float(bool(row["is_event"]))
+                                            is_work_day = float(bool(row["is_work_day"]))
+                                            is_earthquake = float(bool(row["is_earthquake"]))
+                                            
+                                            features = create_feature_vector(
+                                                store_nbr=int(row["store_nbr"]),
+                                                family=str(row["family"]),
+                                                date=str(row["date"]),
+                                                onpromotion=onpromotion,
+                                                dcoilwtico=dcoilwtico,
+                                                is_holiday=is_holiday,
+                                                is_event=is_event,
+                                                is_work_day=is_work_day,
+                                                is_earthquake=is_earthquake
+                                            )
+                                            pred = model.predict(features, verbose=0)[0][0]
+                                            predictions.append(max(0, float(pred)))
+                                            
+                                            # Update progress
+                                            progress_bar.progress((idx + 1) / len(df))
+                                        except Exception as e:
+                                            st.warning(f"⚠️ Error processing row {idx + 1}: {str(e)}")
+                                            predictions.append(0.0)
+                                
+                                progress_bar.empty()
+                                result_df["predicted_sales"] = predictions
+                                
+                                # Display results
+                                st.markdown("### 📊 Prediction Results")
+                                st.dataframe(result_df.head(100), use_container_width=True, height=400)
+                                
+                                # Statistics
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Total Predictions", len(predictions))
+                                with col2:
+                                    st.metric("Mean Predicted Sales", f"{np.mean(predictions):.2f}")
+                                with col3:
+                                    st.metric("Total Predicted Sales", f"{np.sum(predictions):,.2f}")
+                                
+                                # Download section
+                                st.markdown("---")
+                                st.markdown("#### 💾 Download Predictions")
+                                csv_data = result_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download CSV",
+                                    data=csv_data,
+                                    file_name=f"sales_predictions_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                    mime="text/csv",
+                                    use_container_width=True
+                                )
+                                
+                                st.success("✅ Predictions completed successfully!")
+                                
+                            except Exception as e:
+                                st.error(f"❌ Error during prediction: {str(e)}")
+                                st.exception(e)
+                            
+            except Exception as e:
+                st.error(f"❌ Error reading file: {str(e)}")
+                st.exception(e)
 
 # =========================================================
 # ABOUT PAGE
